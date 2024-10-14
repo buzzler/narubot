@@ -163,3 +163,4 @@ cython_debug/
 
 # buzzler
 conversation.wav
+.vscode/
