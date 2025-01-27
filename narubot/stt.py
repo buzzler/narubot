@@ -23,6 +23,12 @@ class STT:
         self.audio_frames = []
         self.silent_chunks = 0
         self.speaking = False
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def _is_silent(self, data: bytes) -> bool:
         return np.abs(np.frombuffer(data, dtype=np.int16)).mean() < self.config.silence_threshold
