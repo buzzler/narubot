@@ -7,6 +7,7 @@ class Config:
             stt_compute_type = "float32", 
             stt_language = "ko",
             stt_start_commands = ["시작"],
+            stt_magic_commands = [],
             stt_stop_commands = ["종료"],
             llm_model = "mistral:7b",
             llm_system_prompt = "",
@@ -24,6 +25,7 @@ class Config:
         self.stt_compute_type = stt_compute_type  # The compute type to use for the model.
         self.stt_language = stt_language # The language to use for transcription.
         self.stt_start_commands = stt_start_commands  # Commands to start the transcription process.
+        self.stt_magic_commands = stt_magic_commands  # Magic commands to trigger specific actions during transcription.
         self.stt_stop_commands = stt_stop_commands  # Commands to stop the transcription process.
         self.llm_model = llm_model  # The Ollama model to use for chatbot interactions.
         self.llm_system_prompt = llm_system_prompt  # System prompt for Ollama.

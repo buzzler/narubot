@@ -25,6 +25,8 @@ class STT:
         self.silent_chunks = 0
         self.speaking = False
         self.activated = False
+        self.llm = None
+        self.tts = None
     
     def __enter__(self):
         return self
@@ -39,6 +41,9 @@ class STT:
         for command in self.config.stt_start_commands:
             if text.startswith(command):
                 return True, text.removeprefix(command).strip()
+        for command in self.config.stt_magic_commands:
+            if text.find(command) != -1:
+                return True, text
         return False, ""
 
     def _is_end_of_speech(self, text: str) -> bool:
@@ -46,6 +51,34 @@ class STT:
             if text.startswith(command):
                 return True
         return False
+    
+    def _play_effect(self, effect_path: str):
+        with wave.open(effect_path,"rb") as wav:
+            stream = self.pyaudio.open(format = self.pyaudio.get_format_from_width(wav.getsampwidth()), 
+                                   channels = wav.getnchannels(),
+                                   rate = wav.getframerate(),
+                                   output = True)
+            data = wav.readframes(self.config.audio_chunk)
+            while data:
+                stream.write(data)
+                data = wav.readframes(self.config.audio_chunk)
+            stream.stop_stream()
+            stream.close()
+
+    def _activate(self):
+        self.activated = True
+        self.llm = LLM(self.config)
+        self.tts = TTS(self.config)
+        self._play_effect(r'asset/start.wav')
+    
+    def _deactivate(self):
+        self._play_effect(r'asset/end.wav')
+        self.activated = False
+        del self.llm
+        del self.tts
+        self.llm = None
+        self.tts = None
+        gc.collect()
 
     def _save_wav(self) -> None:
         with wave.open(self.config.wav_file, 'wb') as wf:
@@ -63,8 +96,10 @@ class STT:
     def _flush_stream(self) -> None:
         self.audio_frames = []
         self.silent_chunks = 0
+        if self.activated:
+            self._play_effect(r'asset/turn.wav')
         print("Listening...")
-    
+
     def process_audio_loop(self) -> None:
         self._flush_stream()
         while True:
@@ -72,30 +107,25 @@ class STT:
             if self._is_silent(data):
                 self.silent_chunks += 1
                 if self.speaking and self.silent_chunks > self.config.silence_limit * self.config.audio_sample_rate / self.config.audio_chunk:
-                    print("Processing...")
                     self.speaking = False
                     self._save_wav()
                     text = self._speech_to_text()
+                    print("User:", text)
 
                     if not self.activated:
                         is_start, text = self._is_start_of_speech(text)
                         if is_start:
-                            self.activated = True
-                            llm = LLM(self.config)
-                            tts = TTS(self.config)
+                            self._activate()
 
                     if self.activated:
                         if self._is_end_of_speech(text):
-                            self.activated = False
-                            llm = None
-                            tts = None
-                            del llm
-                            del tts
-                            gc.collect()
+                            self._deactivate()
 
                     if self.activated:
-                        response = llm.chat(text)
-                        tts.text_to_speech(response)
+                        self._play_effect(r'asset/process.wav')
+                        response = self.llm.chat(text)
+                        print("Assistant:", text)
+                        self.tts.text_to_speech(response)
 
                     self._flush_stream()
             else:
@@ -105,6 +135,5 @@ class STT:
                 self.audio_frames.append(data)
 
     def close(self):
-        print("Stopping...")
+        print("Closing...")
         self.pyaudio.close(self.microphone)
-        print("Closed.")
