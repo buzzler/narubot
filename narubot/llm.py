@@ -6,8 +6,8 @@ from .config import Config
 class LLM:
     def __init__(self, config: Config):
         self.config = config
-        if len(self.config.ollama_system_prompt) > 0:
-            self.messages = [{"role": "system", "content": self.config.ollama_system_prompt}]
+        if len(self.config.llm_system_prompt) > 0:
+            self.messages = [{"role": "system", "content": self.config.llm_system_prompt}]
             self.max_messages = 33
             self.pop_at = 1
         else:
@@ -19,7 +19,7 @@ class LLM:
         msg = {"role": "user", "content": text}
         self.messages.append(msg)
         response = ollama.chat(
-            model=self.config.ollama_model,
+            model=self.config.llm_model,
             messages=self.messages,
             stream=False,
         )
