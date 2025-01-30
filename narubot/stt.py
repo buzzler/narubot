@@ -10,10 +10,7 @@ from .llm import LLM
 class STT:
     def __init__(self, config: Config):
         self.config = config
-        self.whisper = WhisperModel(
-            self.config.stt_model, 
-            device=self.config.device, 
-            compute_type=self.config.stt_compute_type)
+        self.whisper = None
         self.pyaudio = pyaudio.PyAudio()
         self.microphone = self.pyaudio.open(
             format=self.config.audio_format,
@@ -27,12 +24,22 @@ class STT:
         self.activated = False
         self.llm = None
         self.tts = None
+        self._init_whisper()
     
     def __enter__(self):
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def _init_whisper(self):
+        if self.whisper is not None:
+            del self.whisper
+            self.whisper = None
+        if self.activated:
+            self.whisper = WhisperModel(self.config.stt_model, device=self.config.device, compute_type=self.config.stt_compute_type)
+        else:
+            self.whisper = WhisperModel(self.config.stt_standby_model, device=self.config.device, compute_type=self.config.stt_compute_type)
 
     def _is_silent(self, data: bytes) -> bool:
         return np.abs(np.frombuffer(data, dtype=np.int16)).mean() < self.config.silence_threshold
@@ -88,8 +95,12 @@ class STT:
             wf.writeframes(b''.join(self.audio_frames))
     
     def _speech_to_text(self) -> str:
+        if self.activated:
+            lang = self.config.stt_language
+        else:
+            lang = self.config.stt_standby_language
         with open(self.config.wav_file, "rb") as audio_file:
-            segments, _ = self.whisper.transcribe(audio_file, language=self.config.stt_language)
+            segments, _ = self.whisper.transcribe(audio_file, language=lang)
             segments = list(segments)
             return str.join(" ", [segment.text.strip() for segment in segments])
     
@@ -116,15 +127,17 @@ class STT:
                         is_start, text = self._is_start_of_speech(text)
                         if is_start:
                             self._activate()
+                            self._init_whisper()
 
                     if self.activated:
                         if self._is_end_of_speech(text):
                             self._deactivate()
+                            self._init_whisper()
 
                     if self.activated:
                         self._play_effect(r'asset/process.wav')
                         response = self.llm.chat(text)
-                        print("Assistant:", text)
+                        print("Assistant:", response)
                         self.tts.text_to_speech(response)
 
                     self._flush_stream()

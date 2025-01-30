@@ -3,9 +3,11 @@ import pyaudio
 class Config:
     def __init__(self, 
             device = "cpu", 
-            stt_model = "medium", 
+            stt_model = "large-v2", 
+            stt_standby_model = "tiny",
             stt_compute_type = "float32", 
             stt_language = "ko",
+            stt_standby_language = "en",
             stt_start_commands = ["시작"],
             stt_magic_commands = [],
             stt_stop_commands = ["종료"],
@@ -22,8 +24,10 @@ class Config:
             tts_language = "KR"):
         self.device = device # The device to use for inference.
         self.stt_model = stt_model  # The model size to use for transcription.
+        self.stt_standby_model = stt_standby_model  # A standby model for when the main one is not available.
         self.stt_compute_type = stt_compute_type  # The compute type to use for the model.
         self.stt_language = stt_language # The language to use for transcription.
+        self.stt_standby_language = stt_standby_language  # The standby language for when the main one is not available.
         self.stt_start_commands = stt_start_commands  # Commands to start the transcription process.
         self.stt_magic_commands = stt_magic_commands  # Magic commands to trigger specific actions during transcription.
         self.stt_stop_commands = stt_stop_commands  # Commands to stop the transcription process.
