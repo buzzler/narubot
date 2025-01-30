@@ -121,22 +121,28 @@ class STT:
                     self.speaking = False
                     self._save_wav()
                     text = self._speech_to_text()
-                    print("User:", text)
 
+                    # Check if the speech is a magic command
                     if not self.activated:
                         is_start, text = self._is_start_of_speech(text)
                         if is_start:
                             self._activate()
                             self._init_whisper()
+                            self.tts.text_to_speech("대화를 시작합니다")
+                            self._flush_stream()
+                            continue
 
+                    # Check if the speech is a stop command
                     if self.activated:
                         if self._is_end_of_speech(text):
                             self._deactivate()
                             self._init_whisper()
 
+                    # If the speech is activated, process it
                     if self.activated:
+                        print("User:", text)
                         self._play_effect(r'asset/process.wav')
-                        response = self.llm.chat(text)
+                        response = self.llm.chat(text).strip()
                         print("Assistant:", response)
                         self.tts.text_to_speech(response)
 
