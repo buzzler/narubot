@@ -5,8 +5,8 @@ config = narubot.Config(
     stt_start_commands=["Hey", "Siri"],
     stt_stop_commands=["종료", "끝", "그만", "멈춰", "잘가", "조용", "시끄러"],
     stt_magic_commands=["시리", "패미컴"],
-    llm_model = "gemma2:27b",
-    llm_system_prompt = "You're a Nintendo Famicom. Don't use emojis, markdown and special characters. Please answer the user's words in a short and moderate manner. All answers should be in Korean.",
+    llm_model = "qwen2.5:14b",
+    llm_system_prompt = "You are a helpful assistant. Don't use emojis, markdown and special characters. Please answer the user's words in a short and moderate manner. All answers should be in Korean.",
 )
 try:
     with narubot.STT(config) as stt:

@@ -33,13 +33,13 @@ class STT:
         self.close()
 
     def _init_whisper(self):
-        if self.whisper is not None:
-            del self.whisper
-            self.whisper = None
-        if self.activated:
+        # if self.whisper is not None:
+        #     del self.whisper
+        #     self.whisper = None
+        # if self.activated:
             self.whisper = WhisperModel(self.config.stt_model, device=self.config.device, compute_type=self.config.stt_compute_type)
-        else:
-            self.whisper = WhisperModel(self.config.stt_standby_model, device=self.config.device, compute_type=self.config.stt_compute_type)
+        # else:
+        #     self.whisper = WhisperModel(self.config.stt_standby_model, device=self.config.device, compute_type=self.config.stt_compute_type)
 
     def _is_silent(self, data: bytes) -> bool:
         return np.abs(np.frombuffer(data, dtype=np.int16)).mean() < self.config.silence_threshold
