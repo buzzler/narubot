@@ -25,7 +25,8 @@ class LLM:
             model=self.config.llm_model,
             messages=self.messages,
             stream=False,
-            tools=self.tools
+            tools=self.tools,
+            options={"num_batch": 1}
         )
         msg = response['message']
         self.messages.append(msg)
@@ -35,7 +36,11 @@ class LLM:
                 if function_to_call := available_functions.get(tool['function']['name']):
                     output = function_to_call(**tool['function']['arguments'])
                     self.messages.append({'role': 'tool', 'content': str(output), 'name': tool['function']['name']})
-            final_response : ollama.ChatResponse = ollama.chat(model=self.config.llm_model, messages=self.messages, stream=False,)
+            final_response : ollama.ChatResponse = ollama.chat(
+                model=self.config.llm_model, 
+                messages=self.messages, 
+                stream=False,
+                options={"num_batch": 1})
             msg = final_response['message']
             self.messages.append(msg)
 

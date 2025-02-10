@@ -13,7 +13,9 @@ class STT:
         self.whisper = WhisperModel(
             self.config.stt_model, 
             device=self.config.device, 
-            compute_type=self.config.stt_compute_type)
+            compute_type=self.config.stt_compute_type,
+            cpu_threads=8,
+            num_workers=1,)
         self.pyaudio = pyaudio.PyAudio()
         self.microphone = self.pyaudio.open(
             format=self.config.audio_format,
@@ -89,7 +91,7 @@ class STT:
     
     def _speech_to_text(self) -> str:
         with open(self.config.wav_file, "rb") as audio_file:
-            segments, _ = self.whisper.transcribe(audio_file, language=self.config.stt_language)
+            segments, _ = self.whisper.transcribe(audio_file, language=self.config.stt_language, beam_size=2)
             segments = list(segments)
             return str.join(" ", [segment.text.strip() for segment in segments])
     
