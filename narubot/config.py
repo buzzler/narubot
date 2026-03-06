@@ -1,4 +1,33 @@
-import pyaudio
+from __future__ import annotations
+
+import importlib.util
+
+
+def _resolve_default_audio_format() -> int | None:
+    """Resolve PyAudio sample format lazily so Config can be imported without PyAudio."""
+    if importlib.util.find_spec("pyaudio") is None:
+        return None
+
+    import pyaudio
+
+    return pyaudio.paInt16
+
+
+def _resolve_device(device: str) -> str:
+    """Select a runtime-safe inference device.
+
+    Falls back to CPU when CUDA is requested but unavailable in the current
+    Python environment.
+    """
+    if device != "cuda":
+        return device
+
+    if importlib.util.find_spec("torch") is None:
+        return "cpu"
+
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 class Config:
     def __init__(self, 
@@ -13,14 +42,14 @@ class Config:
             llm_system_prompt = "",
             wav_file = "conversation.wav",
             audio_chunk = 1024,
-            audio_format = pyaudio.paInt16,
+            audio_format = None,
             audio_channels = 1,
             audio_sample_rate = 16000,
             silence_threshold= 500,
             silence_limit = 1,
             tts_speed = 1.3,
             tts_language = "KR"):
-        self.device = device # The device to use for inference.
+        self.device = _resolve_device(device) # The device to use for inference.
         self.stt_model = stt_model  # The model size to use for transcription.
         self.stt_compute_type = stt_compute_type  # The compute type to use for the model.
         self.stt_language = stt_language # The language to use for transcription.
@@ -31,7 +60,7 @@ class Config:
         self.llm_system_prompt = llm_system_prompt  # System prompt for Ollama.
         self.wav_file = wav_file  # File to save audio data as WAV.
         self.audio_chunk = audio_chunk  # Number of frames per buffer for PyAudio.
-        self.audio_format = audio_format  # Audio format for recording.
+        self.audio_format = audio_format if audio_format is not None else _resolve_default_audio_format()  # Audio format for recording.
         self.audio_channels = audio_channels  # Number of channels for recording.
         self.audio_sample_rate = audio_sample_rate # Sampling rate for recording.
         self.silence_threshold = silence_threshold  # Threshold to detect silence in audio data.

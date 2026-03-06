@@ -1,15 +1,25 @@
 import gc
-import pyaudio
-import numpy as np
 import wave
-from faster_whisper import WhisperModel
+import importlib.util
 from .config import Config
-from .tts import TTS
-from .llm import LLM
 
 class STT:
     def __init__(self, config: Config):
+        if importlib.util.find_spec("pyaudio") is None:
+            raise ModuleNotFoundError(
+                "PyAudio is required for STT microphone input. "
+                "Install OS audio libs then `pip install pyaudio` and retry."
+            )
+
+        import pyaudio
+        import numpy as np
+        from faster_whisper import WhisperModel
+
+        if self._needs_audio_format(config):
+            config.audio_format = pyaudio.paInt16
+
         self.config = config
+        self.np = np
         self.whisper = WhisperModel(
             self.config.stt_model, 
             device=self.config.device, 
@@ -29,6 +39,10 @@ class STT:
         self.activated = False
         self.llm = None
         self.tts = None
+
+    @staticmethod
+    def _needs_audio_format(config: Config) -> bool:
+        return config.audio_format is None
     
     def __enter__(self):
         return self
@@ -37,7 +51,7 @@ class STT:
         self.close()
 
     def _is_silent(self, data: bytes) -> bool:
-        return np.abs(np.frombuffer(data, dtype=np.int16)).mean() < self.config.silence_threshold
+        return self.np.abs(self.np.frombuffer(data, dtype=self.np.int16)).mean() < self.config.silence_threshold
     
     def _is_start_of_speech(self, text: str) -> tuple[bool, str]:
         for command in self.config.stt_start_commands:
@@ -68,6 +82,9 @@ class STT:
             stream.close()
 
     def _activate(self):
+        from .llm import LLM
+        from .tts import TTS
+
         self.activated = True
         self.llm = LLM(self.config)
         self.tts = TTS(self.config)
@@ -146,4 +163,11 @@ class STT:
 
     def close(self):
         print("Closing...")
-        self.pyaudio.close(self.microphone)
+        if self.microphone is not None:
+            self.microphone.stop_stream()
+            self.microphone.close()
+            self.microphone = None
+
+        if self.pyaudio is not None:
+            self.pyaudio.terminate()
+            self.pyaudio = None
