@@ -3,6 +3,7 @@ import wave
 import importlib.util
 from .config import Config
 
+
 class STT:
     def __init__(self, config: Config):
         if importlib.util.find_spec("pyaudio") is None:
@@ -20,19 +21,15 @@ class STT:
 
         self.config = config
         self.np = np
-        self.whisper = WhisperModel(
-            self.config.stt_model, 
-            device=self.config.device, 
-            compute_type=self.config.stt_compute_type,
-            cpu_threads=8,
-            num_workers=1,)
+        self.whisper = self._create_whisper_model(WhisperModel)
         self.pyaudio = pyaudio.PyAudio()
         self.microphone = self.pyaudio.open(
             format=self.config.audio_format,
             channels=self.config.audio_channels,
             rate=self.config.audio_sample_rate,
             input=True,
-            frames_per_buffer=self.config.audio_chunk)
+            frames_per_buffer=self.config.audio_chunk,
+        )
         self.audio_frames = []
         self.silent_chunks = 0
         self.speaking = False
@@ -40,19 +37,61 @@ class STT:
         self.llm = None
         self.tts = None
 
+    def _create_whisper_model(self, whisper_model_cls):
+        try:
+            return whisper_model_cls(
+                self.config.stt_model,
+                device=self.config.device,
+                compute_type=self.config.stt_compute_type,
+                cpu_threads=8,
+                num_workers=1,
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            if not str(self.config.device).startswith("cuda") or not self._is_cuda_runtime_error(exc):
+                raise
+
+            print(
+                "STT CUDA initialization failed. Falling back to CPU. "
+                f"Reason: {exc}"
+            )
+            self.config.device = "cpu"
+            if self.config.stt_compute_type in {"float16", "int8_float16"}:
+                self.config.stt_compute_type = "int8"
+            return whisper_model_cls(
+                self.config.stt_model,
+                device=self.config.device,
+                compute_type=self.config.stt_compute_type,
+                cpu_threads=8,
+                num_workers=1,
+            )
+
+    @staticmethod
+    def _is_cuda_runtime_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        cuda_error_markers = (
+            "cublas",
+            "cuda",
+            "cudnn",
+            ".dll",
+            "cannot be loaded",
+            "failed to load",
+            "runtimeerror: library",
+        )
+        return any(marker in message for marker in cuda_error_markers)
+
     @staticmethod
     def _needs_audio_format(config: Config) -> bool:
         return config.audio_format is None
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
     def _is_silent(self, data: bytes) -> bool:
         return self.np.abs(self.np.frombuffer(data, dtype=self.np.int16)).mean() < self.config.silence_threshold
-    
+
     def _is_start_of_speech(self, text: str) -> tuple[bool, str]:
         for command in self.config.stt_start_commands:
             if text.startswith(command):
@@ -67,13 +106,15 @@ class STT:
             if text.startswith(command):
                 return True
         return False
-    
+
     def _play_effect(self, effect_path: str):
-        with wave.open(effect_path,"rb") as wav:
-            stream = self.pyaudio.open(format = self.pyaudio.get_format_from_width(wav.getsampwidth()), 
-                                   channels = wav.getnchannels(),
-                                   rate = wav.getframerate(),
-                                   output = True)
+        with wave.open(effect_path, "rb") as wav:
+            stream = self.pyaudio.open(
+                format=self.pyaudio.get_format_from_width(wav.getsampwidth()),
+                channels=wav.getnchannels(),
+                rate=wav.getframerate(),
+                output=True,
+            )
             data = wav.readframes(self.config.audio_chunk)
             while data:
                 stream.write(data)
@@ -88,10 +129,10 @@ class STT:
         self.activated = True
         self.llm = LLM(self.config)
         self.tts = TTS(self.config)
-        self._play_effect(r'asset/start.wav')
-    
+        self._play_effect(r"asset/start.wav")
+
     def _deactivate(self):
-        self._play_effect(r'asset/end.wav')
+        self._play_effect(r"asset/end.wav")
         self.activated = False
         del self.llm
         del self.tts
@@ -100,23 +141,23 @@ class STT:
         gc.collect()
 
     def _save_wav(self) -> None:
-        with wave.open(self.config.wav_file, 'wb') as wf:
+        with wave.open(self.config.wav_file, "wb") as wf:
             wf.setnchannels(self.config.audio_channels)
             wf.setsampwidth(self.pyaudio.get_sample_size(self.config.audio_format))
             wf.setframerate(self.config.audio_sample_rate)
-            wf.writeframes(b''.join(self.audio_frames))
-    
+            wf.writeframes(b"".join(self.audio_frames))
+
     def _speech_to_text(self) -> str:
         with open(self.config.wav_file, "rb") as audio_file:
             segments, _ = self.whisper.transcribe(audio_file, language=self.config.stt_language, beam_size=2)
             segments = list(segments)
             return str.join(" ", [segment.text.strip() for segment in segments])
-    
+
     def _flush_stream(self) -> None:
         self.audio_frames = []
         self.silent_chunks = 0
         if self.activated:
-            self._play_effect(r'asset/turn.wav')
+            self._play_effect(r"asset/turn.wav")
         print("Listening...")
 
     def process_audio_loop(self) -> None:
@@ -135,7 +176,7 @@ class STT:
                         is_start, text = self._is_start_of_speech(text)
                         if is_start:
                             self._activate()
-                            self.tts.text_to_speech("대화를 시작합니다")
+                            self.tts.text_to_speech("Starting conversation.")
                             self._flush_stream()
                             continue
                         else:
@@ -149,7 +190,7 @@ class STT:
                     # If the speech is activated, process it
                     if self.activated:
                         print("User:", text)
-                        self._play_effect(r'asset/process.wav')
+                        self._play_effect(r"asset/process.wav")
                         response = self.llm.chat(text).strip()
                         print("Assistant:", response)
                         self.tts.text_to_speech(response)
