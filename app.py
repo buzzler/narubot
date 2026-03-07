@@ -8,7 +8,7 @@ config = narubot.Config(
     llm_provider = "ollama",  # "ollama" or "openai"
     llm_model = "qwen2.5:7b",
     llm_api_key = None,  # Set for OpenAI (or use OPENAI_API_KEY env var)
-    llm_base_url = None,  # Optional OpenAI-compatible base URL
+    llm_base_url = "https://api.openai.com/v1",  # Optional OpenAI-compatible base URL
     llm_system_prompt = "You are a helpful assistant. Don't use emojis, markdown and special characters. Please answer the user's words in a short and moderate manner. All answers should be in Korean.",
 )
 try:

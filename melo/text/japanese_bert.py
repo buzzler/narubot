@@ -1,10 +1,13 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForMaskedLM
 import sys
+
+import torch
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 
 models = {}
 tokenizers = {}
+
+
 def get_bert_feature(text, word2ph, device=None, model_id='tohoku-nlp/bert-base-japanese-v3'):
     global model
     global tokenizer
@@ -17,21 +20,27 @@ def get_bert_feature(text, word2ph, device=None, model_id='tohoku-nlp/bert-base-
         device = "mps"
     if not device:
         device = "cuda"
+
     if model_id not in models:
-        model = AutoModelForMaskedLM.from_pretrained(model_id).to(
-            device
-        )
+        config = AutoConfig.from_pretrained(model_id)
+        # Some checkpoints include duplicate tied weights in the state dict.
+        if hasattr(config, "tie_word_embeddings"):
+            config.tie_word_embeddings = False
+
+        model = AutoModel.from_pretrained(
+            model_id,
+            config=config,
+        ).to(device)
         models[model_id] = model
+
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         tokenizers[model_id] = tokenizer
     else:
         model = models[model_id]
         tokenizer = tokenizers[model_id]
 
-
     with torch.no_grad():
         inputs = tokenizer(text, return_tensors="pt")
-        tokenized = tokenizer.tokenize(text)
         for i in inputs:
             inputs[i] = inputs[i].to(device)
         res = model(**inputs, output_hidden_states=True)

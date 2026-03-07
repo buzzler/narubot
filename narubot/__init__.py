@@ -1,3 +1,17 @@
+import warnings
+
+# Third-party deprecation warnings from upstream libs; harmless for runtime behavior.
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message="`torch.nn.utils.weight_norm` is deprecated.*",
+    category=FutureWarning,
+)
+
 from .config import Config
 
 __all__ = ["Config", "STT", "TTS", "LLM", "get_tools"]
