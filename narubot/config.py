@@ -59,6 +59,7 @@ class Config:
             silence_limit = 1,
             stt_queue_max_size = 32,
             stt_pause_during_tts = True,
+            tts_enabled = True,
             tts_wait_for_user_silence = True,
             tts_wait_timeout_sec = 2.0,
             tts_speed = 1.3,
@@ -90,6 +91,7 @@ class Config:
         self.silence_limit = silence_limit  # Maximum number of silent chunks before considering speech as ended.
         self.stt_queue_max_size = stt_queue_max_size  # Max buffered utterances while worker is busy.
         self.stt_pause_during_tts = stt_pause_during_tts  # Pause STT capture while speaker output is playing.
+        self.tts_enabled = tts_enabled  # Enable/disable all speech playback (TTS and effects).
         self.tts_wait_for_user_silence = tts_wait_for_user_silence  # Wait until user speech ends before TTS output.
         self.tts_wait_timeout_sec = tts_wait_timeout_sec  # Max wait time before speaking anyway.
         self.tts_speed = tts_speed  # Speed for text-to-speech conversion.

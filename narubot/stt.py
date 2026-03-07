@@ -45,6 +45,7 @@ class STT:
         self.utterance_queue = queue.Queue(maxsize=self.config.stt_queue_max_size)
         self.worker_thread = None
         self.tts_playing = threading.Event()
+        self.capture_paused_for_tts = False
 
     def _create_whisper_model(self, whisper_model_cls):
         try:
@@ -113,6 +114,7 @@ class STT:
             normalized_command = self._normalize_command_text(command)
             if normalized_command and normalized_text.startswith(normalized_command):
                 return True, text
+
         for command in self.config.stt_magic_commands:
             if text.find(command) != -1:
                 return True, text
@@ -132,6 +134,9 @@ class STT:
         return False
 
     def _play_effect(self, effect_path: str):
+        if not self.config.tts_enabled:
+            return
+
         should_pause_stt = self.config.stt_pause_during_tts
         if should_pause_stt:
             self.tts_playing.set()
@@ -153,7 +158,6 @@ class STT:
         finally:
             if should_pause_stt:
                 self.tts_playing.clear()
-                self._clear_capture_buffers()
 
     def _activate(self):
         from .llm import LLM
@@ -162,7 +166,7 @@ class STT:
         self.activated = True
         self._print_listening_status()
         self.llm = LLM(self.config)
-        self.tts = TTS(self.config)
+        self.tts = TTS(self.config) if self.config.tts_enabled else None
         self._play_effect(r"asset/start.wav")
 
     def _deactivate(self):
@@ -170,7 +174,8 @@ class STT:
         self.activated = False
         self._print_listening_status()
         del self.llm
-        del self.tts
+        if self.tts is not None:
+            del self.tts
         self.llm = None
         self.tts = None
         gc.collect()
@@ -261,7 +266,7 @@ class STT:
         return "\n".join(batch)
 
     def _wait_for_user_silence(self) -> None:
-        if not self.config.tts_wait_for_user_silence:
+        if (not self.config.tts_enabled) or (not self.config.tts_wait_for_user_silence):
             return
 
         deadline = time.monotonic() + max(0.0, float(self.config.tts_wait_timeout_sec))
@@ -269,7 +274,7 @@ class STT:
             time.sleep(0.01)
 
     def _speak_text(self, text: str) -> None:
-        if not text:
+        if (not self.config.tts_enabled) or (not text):
             return
 
         self._wait_for_user_silence()
@@ -283,7 +288,6 @@ class STT:
         finally:
             if should_pause_stt:
                 self.tts_playing.clear()
-                self._clear_capture_buffers()
 
     def _process_utterance(self, frames: list[bytes]) -> None:
         text = self._speech_to_text_from_frames(frames)
@@ -336,8 +340,14 @@ class STT:
             data = self.microphone.read(self.config.audio_chunk, exception_on_overflow=False)
 
             if self.tts_playing.is_set():
-                self._clear_capture_buffers()
+                if not self.capture_paused_for_tts:
+                    self._clear_capture_buffers()
+                    self.capture_paused_for_tts = True
                 continue
+
+            if self.capture_paused_for_tts:
+                self._clear_capture_buffers()
+                self.capture_paused_for_tts = False
 
             if self._is_silent(data):
                 self.silent_chunks += 1
