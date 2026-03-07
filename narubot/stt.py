@@ -145,6 +145,7 @@ class STT:
         from .tts import TTS
 
         self.activated = True
+        self._print_listening_status()
         self.llm = LLM(self.config)
         self.tts = TTS(self.config)
         self._play_effect(r"asset/start.wav")
@@ -152,6 +153,7 @@ class STT:
     def _deactivate(self):
         self._play_effect(r"asset/end.wav")
         self.activated = False
+        self._print_listening_status()
         del self.llm
         del self.tts
         self.llm = None
@@ -185,9 +187,15 @@ class STT:
         self.silent_chunks = 0
         self.speaking = False
 
+    def _print_listening_status(self) -> None:
+        if self.activated:
+            print("Listening (in conversation)...")
+        else:
+            print("Listening (standby)...")
+
     def _flush_stream(self) -> None:
         self._clear_capture_buffers()
-        print("Listening...")
+        self._print_listening_status()
 
     def _enqueue_utterance(self, frames: list[bytes]) -> None:
         if not frames:
