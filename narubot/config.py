@@ -33,9 +33,12 @@ def _resolve_device(device: str) -> str:
 class Config:
     def __init__(self,
             device = "cpu",
-            stt_model = "large-v2",
-            stt_compute_type = "float32",
+            stt_model = "large-v3",
+            stt_compute_type = "int8_float16",
             stt_language = "ko",
+            stt_beam_size = 5,
+            stt_vad_filter = True,
+            stt_vad_min_silence_ms = 300,
             stt_start_commands = ["\uc2dc\uc791"],
             stt_magic_commands = [],
             stt_stop_commands = ["\uc885\ub8cc"],
@@ -64,6 +67,9 @@ class Config:
         self.stt_model = stt_model  # The model size to use for transcription.
         self.stt_compute_type = stt_compute_type  # The compute type to use for the model.
         self.stt_language = stt_language  # The language to use for transcription.
+        self.stt_beam_size = stt_beam_size  # Beam width for decoding quality/speed tradeoff.
+        self.stt_vad_filter = stt_vad_filter  # Whether to apply model-side VAD filtering.
+        self.stt_vad_min_silence_ms = stt_vad_min_silence_ms  # Minimum silence for VAD split.
         self.stt_start_commands = stt_start_commands  # Commands to start the transcription process.
         self.stt_magic_commands = stt_magic_commands  # Magic commands to trigger specific actions during transcription.
         self.stt_stop_commands = stt_stop_commands  # Commands to stop the transcription process.

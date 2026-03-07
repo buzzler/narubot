@@ -101,18 +101,33 @@ class STT:
     def _is_silent(self, data: bytes) -> bool:
         return self.np.abs(self.np.frombuffer(data, dtype=self.np.int16)).mean() < self.config.silence_threshold
 
+    @staticmethod
+    def _normalize_command_text(text: str) -> str:
+        return "".join(ch for ch in text.casefold() if ch.isalnum())
+
     def _is_start_of_speech(self, text: str) -> tuple[bool, str]:
+        normalized_text = self._normalize_command_text(text)
         for command in self.config.stt_start_commands:
             if text.startswith(command):
                 return True, text.removeprefix(command).strip()
+            normalized_command = self._normalize_command_text(command)
+            if normalized_command and normalized_text.startswith(normalized_command):
+                return True, text
         for command in self.config.stt_magic_commands:
             if text.find(command) != -1:
+                return True, text
+            normalized_command = self._normalize_command_text(command)
+            if normalized_command and normalized_command in normalized_text:
                 return True, text
         return False, ""
 
     def _is_end_of_speech(self, text: str) -> bool:
+        normalized_text = self._normalize_command_text(text)
         for command in self.config.stt_stop_commands:
             if text.startswith(command):
+                return True
+            normalized_command = self._normalize_command_text(command)
+            if normalized_command and normalized_text.startswith(normalized_command):
                 return True
         return False
 
@@ -175,11 +190,17 @@ class STT:
         if audio is None:
             return ""
 
-        segments, _ = self.whisper.transcribe(
-            audio,
-            language=self.config.stt_language,
-            beam_size=2,
-        )
+        transcribe_kwargs = {
+            "language": self.config.stt_language,
+            "beam_size": self.config.stt_beam_size,
+            "vad_filter": self.config.stt_vad_filter,
+        }
+        if self.config.stt_vad_filter:
+            transcribe_kwargs["vad_parameters"] = {
+                "min_silence_duration_ms": self.config.stt_vad_min_silence_ms,
+            }
+
+        segments, _ = self.whisper.transcribe(audio, **transcribe_kwargs)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def _clear_capture_buffers(self) -> None:
