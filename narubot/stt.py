@@ -1,6 +1,9 @@
 import gc
-import wave
 import importlib.util
+import queue
+import threading
+import time
+import wave
 from .config import Config
 
 
@@ -30,12 +33,18 @@ class STT:
             input=True,
             frames_per_buffer=self.config.audio_chunk,
         )
+
         self.audio_frames = []
         self.silent_chunks = 0
         self.speaking = False
         self.activated = False
         self.llm = None
         self.tts = None
+
+        self.running = False
+        self.utterance_queue = queue.Queue(maxsize=self.config.stt_queue_max_size)
+        self.worker_thread = None
+        self.tts_playing = threading.Event()
 
     def _create_whisper_model(self, whisper_model_cls):
         try:
@@ -108,19 +117,28 @@ class STT:
         return False
 
     def _play_effect(self, effect_path: str):
-        with wave.open(effect_path, "rb") as wav:
-            stream = self.pyaudio.open(
-                format=self.pyaudio.get_format_from_width(wav.getsampwidth()),
-                channels=wav.getnchannels(),
-                rate=wav.getframerate(),
-                output=True,
-            )
-            data = wav.readframes(self.config.audio_chunk)
-            while data:
-                stream.write(data)
+        should_pause_stt = self.config.stt_pause_during_tts
+        if should_pause_stt:
+            self.tts_playing.set()
+
+        try:
+            with wave.open(effect_path, "rb") as wav:
+                stream = self.pyaudio.open(
+                    format=self.pyaudio.get_format_from_width(wav.getsampwidth()),
+                    channels=wav.getnchannels(),
+                    rate=wav.getframerate(),
+                    output=True,
+                )
                 data = wav.readframes(self.config.audio_chunk)
-            stream.stop_stream()
-            stream.close()
+                while data:
+                    stream.write(data)
+                    data = wav.readframes(self.config.audio_chunk)
+                stream.stop_stream()
+                stream.close()
+        finally:
+            if should_pause_stt:
+                self.tts_playing.clear()
+                self._clear_capture_buffers()
 
     def _activate(self):
         from .llm import LLM
@@ -140,62 +158,166 @@ class STT:
         self.tts = None
         gc.collect()
 
-    def _save_wav(self) -> None:
-        with wave.open(self.config.wav_file, "wb") as wf:
-            wf.setnchannels(self.config.audio_channels)
-            wf.setsampwidth(self.pyaudio.get_sample_size(self.config.audio_format))
-            wf.setframerate(self.config.audio_sample_rate)
-            wf.writeframes(b"".join(self.audio_frames))
+    def _frames_to_audio_array(self, frames: list[bytes]):
+        if not frames:
+            return None
 
-    def _speech_to_text(self) -> str:
-        with open(self.config.wav_file, "rb") as audio_file:
-            segments, _ = self.whisper.transcribe(audio_file, language=self.config.stt_language, beam_size=2)
-            segments = list(segments)
-            return str.join(" ", [segment.text.strip() for segment in segments])
+        pcm = self.np.frombuffer(b"".join(frames), dtype=self.np.int16)
+        if pcm.size == 0:
+            return None
 
-    def _flush_stream(self) -> None:
+        return pcm.astype(self.np.float32) / 32768.0
+
+    def _speech_to_text_from_frames(self, frames: list[bytes]) -> str:
+        audio = self._frames_to_audio_array(frames)
+        if audio is None:
+            return ""
+
+        segments, _ = self.whisper.transcribe(
+            audio,
+            language=self.config.stt_language,
+            beam_size=2,
+        )
+        return " ".join(segment.text.strip() for segment in segments).strip()
+
+    def _clear_capture_buffers(self) -> None:
         self.audio_frames = []
         self.silent_chunks = 0
-        if self.activated:
-            self._play_effect(r"asset/turn.wav")
+        self.speaking = False
+
+    def _flush_stream(self) -> None:
+        self._clear_capture_buffers()
         print("Listening...")
 
+    def _enqueue_utterance(self, frames: list[bytes]) -> None:
+        if not frames:
+            return
+
+        try:
+            self.utterance_queue.put_nowait(frames)
+        except queue.Full:
+            print("STT queue is full. Dropping oldest utterance.")
+            try:
+                self.utterance_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self.utterance_queue.put_nowait(frames)
+
+    def _build_llm_batch_text(self, first_text: str) -> str:
+        if not self.config.llm_batch_enabled:
+            return first_text
+
+        batch = [first_text]
+        deadline = time.monotonic() + max(0.0, float(self.config.llm_batch_window_sec))
+        max_items = max(1, int(self.config.llm_batch_max_items))
+
+        while len(batch) < max_items and time.monotonic() < deadline:
+            timeout = max(0.0, deadline - time.monotonic())
+            if timeout == 0.0:
+                break
+
+            try:
+                frames = self.utterance_queue.get(timeout=timeout)
+            except queue.Empty:
+                break
+
+            next_text = self._speech_to_text_from_frames(frames)
+            if next_text:
+                print("User (queued):", next_text)
+                batch.append(next_text)
+
+        if len(batch) == 1:
+            return batch[0]
+
+        return "\n".join(batch)
+
+    def _wait_for_user_silence(self) -> None:
+        if not self.config.tts_wait_for_user_silence:
+            return
+
+        deadline = time.monotonic() + max(0.0, float(self.config.tts_wait_timeout_sec))
+        while self.running and self.speaking and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    def _speak_text(self, text: str) -> None:
+        if not text:
+            return
+
+        self._wait_for_user_silence()
+
+        should_pause_stt = self.config.stt_pause_during_tts
+        if should_pause_stt:
+            self.tts_playing.set()
+
+        try:
+            self.tts.text_to_speech(text)
+        finally:
+            if should_pause_stt:
+                self.tts_playing.clear()
+                self._clear_capture_buffers()
+
+    def _process_utterance(self, frames: list[bytes]) -> None:
+        text = self._speech_to_text_from_frames(frames)
+        if not text:
+            return
+
+        if not self.activated:
+            is_start, start_text = self._is_start_of_speech(text)
+            if not is_start:
+                print("Not activated:", text)
+                return
+
+            self._activate()
+            self._speak_text("Starting conversation.")
+            text = start_text if start_text else ""
+
+        if text and self._is_end_of_speech(text):
+            self._deactivate()
+            return
+
+        if not self.activated or not text:
+            return
+
+        print("User:", text)
+        batched_text = self._build_llm_batch_text(text)
+        self._play_effect(r"asset/process.wav")
+        response = self.llm.chat(batched_text).strip()
+        print("Assistant:", response)
+        self._speak_text(response)
+
+    def _worker_loop(self) -> None:
+        while self.running:
+            try:
+                frames = self.utterance_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            try:
+                self._process_utterance(frames)
+            except Exception as exc:
+                print(f"Worker error: {exc}")
+
     def process_audio_loop(self) -> None:
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._worker_loop, name="stt-worker", daemon=True)
+        self.worker_thread.start()
         self._flush_stream()
-        while True:
-            data = self.microphone.read(self.config.audio_chunk)
+
+        while self.running:
+            data = self.microphone.read(self.config.audio_chunk, exception_on_overflow=False)
+
+            if self.tts_playing.is_set():
+                self._clear_capture_buffers()
+                continue
+
             if self._is_silent(data):
                 self.silent_chunks += 1
-                if self.speaking and self.silent_chunks > self.config.silence_limit * self.config.audio_sample_rate / self.config.audio_chunk:
+                silence_frames = self.config.silence_limit * self.config.audio_sample_rate / self.config.audio_chunk
+                if self.speaking and self.silent_chunks > silence_frames:
                     self.speaking = False
-                    self._save_wav()
-                    text = self._speech_to_text()
-
-                    # Check if the speech is a magic command
-                    if not self.activated:
-                        is_start, text = self._is_start_of_speech(text)
-                        if is_start:
-                            self._activate()
-                            self.tts.text_to_speech("Starting conversation.")
-                            self._flush_stream()
-                            continue
-                        else:
-                            print("Not activated:", text)
-
-                    # Check if the speech is a stop command
-                    if self.activated:
-                        if self._is_end_of_speech(text):
-                            self._deactivate()
-
-                    # If the speech is activated, process it
-                    if self.activated:
-                        print("User:", text)
-                        self._play_effect(r"asset/process.wav")
-                        response = self.llm.chat(text).strip()
-                        print("Assistant:", response)
-                        self.tts.text_to_speech(response)
-
+                    utterance = self.audio_frames
                     self._flush_stream()
+                    self._enqueue_utterance(utterance)
             else:
                 self.silent_chunks = 0
                 if not self.speaking:
@@ -204,6 +326,12 @@ class STT:
 
     def close(self):
         print("Closing...")
+        self.running = False
+
+        if self.worker_thread is not None and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=1.0)
+            self.worker_thread = None
+
         if self.microphone is not None:
             self.microphone.stop_stream()
             self.microphone.close()
